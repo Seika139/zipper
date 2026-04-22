@@ -1,0 +1,33 @@
+[tools]
+python = "3.13"
+uv = "latest"
+
+[tasks.init]
+description = "Install dependencies"
+run = "uv sync --all-extras"
+
+[tasks.test]
+description = "Run tests"
+run = "uv run pytest tests/ -v"
+
+[tasks.check]
+description = "Run linter and type checker"
+run = """
+uv run ruff check .
+uv run mypy .
+"""
+
+[tasks.format]
+description = "Run ruff formatter"
+run = """
+uv run ruff format .
+uv run ruff check . --fix
+"""
+
+[tasks.encrypt]
+description = "Encrypt a file or directory"
+run = "uv run python -m zipper -e -c {{arg(name='target')}}"
+
+[tasks.decrypt]
+description = "Decrypt an encrypted ZIP"
+run = "uv run python -m zipper -x {{arg(name='target')}}"
