@@ -2,7 +2,7 @@
 name = "zipper"
 version = "0.1.0"
 description = "Password-based encrypted ZIP archiver with filename encryption support"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
   "cryptography>=46.0.7,<47.0.0",
   "pathspec>=0.12.1,<1.1.0",

@@ -789,3 +789,165 @@ def test_extract_cleans_up_intermediate_directories(tmp_path: Path) -> None:
         extract_secure_encrypted_zip(zip_path, b"wrong", extract_dir)
 
     assert not extract_dir.exists()
+
+
+def _tamper_file_mapping(
+    zip_path: Path, password: bytes, new_mapping: dict[str, str]
+) -> None:
+    """ZIP 内のメタデータを書き換えて file_mapping を差し替える。
+
+    攻撃面テスト用ヘルパ。
+    """
+    with ZipFile(zip_path, "r") as zf:
+        metadata_salt = zf.read("metadata.salt")
+        encrypted_metadata = zf.read("metadata.encrypted")
+        infos = list(zf.infolist())
+        payloads = {info.filename: zf.read(info.filename) for info in infos}
+
+    key, _ = generate_key_from_password(password, metadata_salt)
+    metadata = json.loads(Fernet(key).decrypt(encrypted_metadata).decode("utf-8"))
+    metadata["file_mapping"] = new_mapping
+    new_encrypted = Fernet(key).encrypt(
+        json.dumps(metadata, ensure_ascii=False).encode("utf-8")
+    )
+
+    rebuilt = zip_path.with_suffix(".rebuilt.zip")
+    with ZipFile(rebuilt, "w") as dst:
+        for info in infos:
+            if info.filename == "metadata.encrypted":
+                dst.writestr(info, new_encrypted)
+            else:
+                dst.writestr(info, payloads[info.filename])
+    rebuilt.replace(zip_path)
+
+
+def test_rejects_path_traversal_escape(tmp_path: Path) -> None:
+    """../ を使って extract_dir の外に書き出す攻撃を拒否する。"""
+    src = tmp_path / "src.txt"
+    src.write_text("data", encoding="utf-8")
+    zip_path = tmp_path / "attack.zip"
+    create_secure_encrypted_zip(src, PASSWORD, zip_path)
+
+    _tamper_file_mapping(zip_path, PASSWORD, {"../escaped.txt": "src.txt"})
+
+    extract_dir = tmp_path / "safe_extract"
+    with pytest.raises(ValueError, match="'\\.\\.' を含むエントリ"):
+        extract_secure_encrypted_zip(zip_path, PASSWORD, extract_dir)
+
+    assert not (tmp_path / "escaped.txt").exists()
+    assert not extract_dir.exists()
+
+
+def test_rejects_absolute_path_entry(tmp_path: Path) -> None:
+    src = tmp_path / "src.txt"
+    src.write_text("data", encoding="utf-8")
+    zip_path = tmp_path / "absolute.zip"
+    create_secure_encrypted_zip(src, PASSWORD, zip_path)
+
+    _tamper_file_mapping(zip_path, PASSWORD, {"/tmp/evil.txt": "src.txt"})  # noqa: S108
+
+    extract_dir = tmp_path / "absolute_extract"
+    with pytest.raises(ValueError, match="絶対パスのエントリ"):
+        extract_secure_encrypted_zip(zip_path, PASSWORD, extract_dir)
+
+    assert not Path("/tmp/evil.txt").exists()  # noqa: S108
+
+
+def test_rejects_symlink_in_extract_path(tmp_path: Path) -> None:
+    """途中コンポーネントが symlink の場合、リンク先への書き込みを拒否する。"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "inner" / "file.txt").parent.mkdir()
+    (src / "inner" / "file.txt").write_text("data", encoding="utf-8")
+    zip_path = tmp_path / "symlink.zip"
+    create_secure_encrypted_zip(src, PASSWORD, zip_path)
+
+    extract_dir = tmp_path / "sym_extract"
+    extract_dir.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (extract_dir / "inner").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink を含むエントリ"):
+        extract_secure_encrypted_zip(zip_path, PASSWORD, extract_dir)
+
+    assert not (outside / "file.txt").exists()
+
+
+def test_rejects_reserved_filename_on_encrypt(tmp_path: Path) -> None:
+    """ファイル名 'metadata' は metadata.salt/encrypted と衝突するので拒否する。"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "metadata").write_text("oops", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="予約名と衝突"):
+        create_secure_encrypted_zip(src, PASSWORD, tmp_path / "clash.zip")
+
+
+def test_reserved_name_ok_with_encrypt_filenames(tmp_path: Path) -> None:
+    """encrypt_filenames=True なら 'metadata' という名前も安全に暗号化できる。"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "metadata").write_text("payload", encoding="utf-8")
+
+    zip_path = create_secure_encrypted_zip(
+        src, PASSWORD, tmp_path / "ok.zip", encrypt_filenames=True
+    )
+    extract_dir = tmp_path / "extract_ok"
+    extract_secure_encrypted_zip(zip_path, PASSWORD, extract_dir)
+
+    assert (extract_dir / "metadata").read_text() == "payload"
+
+
+def test_metadata_salt_lookup_is_exact_match(tmp_path: Path) -> None:
+    """dir/metadata.salt があっても metadata.salt の探索が誤爆しない。
+
+    encrypt_filenames=True で dir/metadata.salt を含む ZIP を作り、
+    正しく復号できることを確認する。encrypt_filenames=False だと
+    予約名衝突で作成時点で拒否されるため、ここでは True で検証する。
+    """
+    src = tmp_path / "src"
+    (src / "dir").mkdir(parents=True)
+    (src / "dir" / "metadata.salt").write_text("user data", encoding="utf-8")
+
+    zip_path = create_secure_encrypted_zip(
+        src, PASSWORD, tmp_path / "collide.zip", encrypt_filenames=True
+    )
+    extract_dir = tmp_path / "collide_extract"
+    extract_secure_encrypted_zip(zip_path, PASSWORD, extract_dir)
+
+    assert (extract_dir / "dir" / "metadata.salt").read_text() == "user data"
+
+
+def test_rejects_bogus_iterations_in_metadata(tmp_path: Path) -> None:
+    """メタデータの kdf.iterations が未許可値なら拒否する。"""
+    src = tmp_path / "src.txt"
+    src.write_text("data", encoding="utf-8")
+    zip_path = tmp_path / "bad_iter.zip"
+    create_secure_encrypted_zip(src, PASSWORD, zip_path)
+
+    with ZipFile(zip_path, "r") as zf:
+        metadata_salt = zf.read("metadata.salt")
+        encrypted_metadata = zf.read("metadata.encrypted")
+        infos = list(zf.infolist())
+        payloads = {info.filename: zf.read(info.filename) for info in infos}
+
+    key, _ = generate_key_from_password(PASSWORD, metadata_salt)
+    metadata = json.loads(Fernet(key).decrypt(encrypted_metadata).decode("utf-8"))
+    metadata["kdf"]["iterations"] = 10_000_000_000
+    tampered = Fernet(key).encrypt(
+        json.dumps(metadata, ensure_ascii=False).encode("utf-8")
+    )
+
+    rebuilt = tmp_path / "rebuilt.zip"
+    with ZipFile(rebuilt, "w") as dst:
+        for info in infos:
+            if info.filename == "metadata.encrypted":
+                dst.writestr(info, tampered)
+            else:
+                dst.writestr(info, payloads[info.filename])
+    rebuilt.replace(zip_path)
+
+    extract_dir = tmp_path / "bad_iter_extract"
+    with pytest.raises(ValueError, match=r"未対応の kdf\.iterations"):
+        extract_secure_encrypted_zip(zip_path, PASSWORD, extract_dir)

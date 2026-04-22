@@ -84,6 +84,9 @@ def main() -> None:
             extract_secure_encrypted_zip(zip_filepath, password, extract_dir)
             print("解凍完了")
 
+    except (KeyboardInterrupt, EOFError):
+        print("\nキャンセルしました。")
+        sys.exit(130)
     except Exception as e:  # noqa: BLE001
         print(f"エラー: {e}")
         sys.exit(1)

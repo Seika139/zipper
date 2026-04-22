@@ -4,7 +4,7 @@ import logging
 import os
 import shutil
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import pathspec
@@ -16,7 +16,60 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PBKDF2_ITERATIONS = 600_000
 LEGACY_PBKDF2_ITERATIONS = 390_000
+ALLOWED_PBKDF2_ITERATIONS = frozenset(
+    {LEGACY_PBKDF2_ITERATIONS, DEFAULT_PBKDF2_ITERATIONS}
+)
 METADATA_VERSION = 2
+METADATA_ENCRYPTED_NAME = "metadata.encrypted"
+METADATA_SALT_NAME = "metadata.salt"
+RESERVED_NAMES = frozenset({METADATA_ENCRYPTED_NAME, METADATA_SALT_NAME})
+
+
+def _safe_join(base: Path, entry_path: str) -> Path:
+    """ZIP エントリの相対パスを extract_dir 配下へ安全に結合する。
+
+    Zip Slip 攻撃を防ぐため、以下を拒否する:
+    - 絶対パス (POSIX の `/`, Windows のドライブ文字)
+    - `..` を含むパス
+    - 途中コンポーネントの symlink
+
+    Returns:
+        extract_dir 配下の解決済み絶対パス
+
+    Raises:
+        ValueError: 不正なエントリパスを検出した場合
+    """
+    normalized = entry_path.replace("\\", "/")
+    rel = PurePosixPath(normalized)
+
+    if rel.is_absolute() or rel.drive:
+        msg = f"絶対パスのエントリは許可されていません: {entry_path}"
+        raise ValueError(msg)
+    if any(part == ".." for part in rel.parts):
+        msg = f"'..' を含むエントリは許可されていません: {entry_path}"
+        raise ValueError(msg)
+    if not rel.parts:
+        msg = f"空のエントリパスは許可されていません: {entry_path}"
+        raise ValueError(msg)
+
+    base_resolved = base.resolve()
+    candidate = base_resolved.joinpath(*rel.parts)
+
+    probe = candidate.parent
+    while probe not in {base_resolved, probe.parent}:
+        if probe.is_symlink():
+            msg = f"symlink を含むエントリは許可されていません: {entry_path}"
+            raise ValueError(msg)
+        probe = probe.parent
+
+    resolved = candidate.resolve() if candidate.exists() else candidate
+    try:
+        resolved.relative_to(base_resolved)
+    except ValueError as e:
+        msg = f"extract_dir 外への書き込みを検出: {entry_path}"
+        raise ValueError(msg) from e
+
+    return candidate
 
 
 def generate_key_from_password(
@@ -226,10 +279,18 @@ def create_secure_encrypted_zip(
             name = encrypt_filename(relative_path, metadata_fernet)
         else:
             name = relative_path
+        salt_entry = f"{name}.salt"
+        encrypted_entry = f"{name}.encrypted"
+        if salt_entry in RESERVED_NAMES or encrypted_entry in RESERVED_NAMES:
+            msg = (
+                f"予約名と衝突するファイル名は暗号化できません: {relative_path} "
+                "(encrypt_filenames=True で回避してください)"
+            )
+            raise ValueError(msg)
         file_mapping[relative_path] = name
         salt, encrypted_bytes = encrypt_file(file_path, password, iterations)
-        zf.writestr(f"{name}.salt", salt)
-        zf.writestr(f"{name}.encrypted", encrypted_bytes)
+        zf.writestr(salt_entry, salt)
+        zf.writestr(encrypted_entry, encrypted_bytes)
 
     def _process_directory(
         current_path: Path,
@@ -302,21 +363,16 @@ def _load_metadata(
     """
     namelist = zf.namelist()
 
-    if "metadata.encrypted" not in namelist:
+    if METADATA_ENCRYPTED_NAME not in namelist:
         msg = "暗号化ZIPファイルではありません。"
         raise ValueError(msg)
 
-    encrypted_metadata = zf.read("metadata.encrypted")
-
-    try:
-        metadata_salt_path = next(
-            name for name in namelist if name.endswith("metadata.salt")
-        )
-    except StopIteration:
+    if METADATA_SALT_NAME not in namelist:
         msg = "metadata.saltが見つかりません。ファイル破損の可能性があります。"
-        raise ValueError(msg) from None
+        raise ValueError(msg)
 
-    metadata_salt = zf.read(metadata_salt_path)
+    encrypted_metadata = zf.read(METADATA_ENCRYPTED_NAME)
+    metadata_salt = zf.read(METADATA_SALT_NAME)
 
     for iterations in (DEFAULT_PBKDF2_ITERATIONS, LEGACY_PBKDF2_ITERATIONS):
         key, _ = generate_key_from_password(password, metadata_salt, iterations)
@@ -326,11 +382,30 @@ def _load_metadata(
             continue
         metadata: dict[str, Any] = json.loads(decrypted.decode("utf-8"))
         kdf = metadata.get("kdf") or {}
-        file_iterations = int(kdf.get("iterations", iterations))
+        raw_iterations = kdf.get("iterations", iterations)
+        file_iterations = _validate_iterations(raw_iterations)
         return metadata, file_iterations
 
     msg = "パスワードが間違っています。"
     raise ValueError(msg)
+
+
+def _validate_iterations(value: object) -> int:
+    """メタデータの iterations をホワイトリスト検証する。
+
+    Returns:
+        検証済みの iterations
+
+    Raises:
+        ValueError: 値が許容リストに無い場合
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = f"未対応の kdf.iterations です: {value!r}"
+        raise ValueError(msg)  # noqa: TRY004 - untrusted ZIP metadata, uniform ValueError
+    if value not in ALLOWED_PBKDF2_ITERATIONS:
+        msg = f"未対応の kdf.iterations です: {value}"
+        raise ValueError(msg)
+    return value
 
 
 def _decrypt_single_file(  # noqa: PLR0913, PLR0917
@@ -358,8 +433,7 @@ def _decrypt_single_file(  # noqa: PLR0913, PLR0917
     salt = zf.read(salt_filename)
     temp_encrypted = extract_dir / "temp_encrypted"
 
-    normalized = original_path.replace("\\", "/").replace("/", os.sep)
-    output_file_path = extract_dir / Path(normalized)
+    output_file_path = _safe_join(extract_dir, original_path)
 
     parent = output_file_path.parent
     missing_ancestors: list[Path] = []

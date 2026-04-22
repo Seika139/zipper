@@ -6,6 +6,10 @@ uv = "latest"
 description = "Install dependencies"
 run = "uv sync --all-extras"
 
+[tasks.upgrade]
+description = "Upgrade dependencies"
+run = 'uv sync --upgrade'
+
 [tasks.test]
 description = "Run tests"
 run = "uv run pytest tests/ -v"
