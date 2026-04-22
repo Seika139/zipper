@@ -16,9 +16,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PBKDF2_ITERATIONS = 600_000
 LEGACY_PBKDF2_ITERATIONS = 390_000
-ALLOWED_PBKDF2_ITERATIONS = frozenset(
-    {LEGACY_PBKDF2_ITERATIONS, DEFAULT_PBKDF2_ITERATIONS}
-)
+ALLOWED_PBKDF2_ITERATIONS = frozenset({
+    LEGACY_PBKDF2_ITERATIONS,
+    DEFAULT_PBKDF2_ITERATIONS,
+})
 METADATA_VERSION = 2
 METADATA_ENCRYPTED_NAME = "metadata.encrypted"
 METADATA_SALT_NAME = "metadata.salt"
@@ -346,9 +347,7 @@ def create_secure_encrypted_zip(
     return zip_filename
 
 
-def _load_metadata(
-    zf: zipfile.ZipFile, password: bytes
-) -> tuple[dict[str, Any], int]:
+def _load_metadata(zf: zipfile.ZipFile, password: bytes) -> tuple[dict[str, Any], int]:
     """ZIPからメタデータを復号して返す。
 
     新フォーマット(version>=2)では metadata.kdf.iterations を信頼する。

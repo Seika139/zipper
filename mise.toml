@@ -19,19 +19,11 @@ run = "uv run pytest tests/ -v"
 
 [tasks.check]
 description = "Run linter and type checker"
-quiet = true
-run = """
-uv run ruff check .
-uv run mypy .
-"""
+run = ["uv run ruff check .", "uv run mypy ."]
 
 [tasks.format]
 description = "Run ruff formatter"
-quiet = true
-run = """
-uv run ruff format .
-uv run ruff check . --fix
-"""
+run = ["uv run ruff format .", "uv run ruff check . --fix"]
 
 [tasks.encrypt]
 description = "Encrypt a file or directory"
