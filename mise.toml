@@ -4,18 +4,22 @@ uv = "latest"
 
 [tasks.init]
 description = "Install dependencies"
+quiet = true
 run = "uv sync --all-extras"
 
 [tasks.upgrade]
 description = "Upgrade dependencies"
+quiet = true
 run = 'uv sync --upgrade'
 
 [tasks.test]
 description = "Run tests"
+quiet = true
 run = "uv run pytest tests/ -v"
 
 [tasks.check]
 description = "Run linter and type checker"
+quiet = true
 run = """
 uv run ruff check .
 uv run mypy .
@@ -23,6 +27,7 @@ uv run mypy .
 
 [tasks.format]
 description = "Run ruff formatter"
+quiet = true
 run = """
 uv run ruff format .
 uv run ruff check . --fix
@@ -30,8 +35,10 @@ uv run ruff check . --fix
 
 [tasks.encrypt]
 description = "Encrypt a file or directory"
+quiet = true
 run = "uv run python -m zipper -e -c {{arg(name='target')}}"
 
 [tasks.decrypt]
 description = "Decrypt an encrypted ZIP"
+quiet = true
 run = "uv run python -m zipper -x {{arg(name='target')}}"
