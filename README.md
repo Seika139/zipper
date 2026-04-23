@@ -1,5 +1,19 @@
 # zipper
 
+<div align="center">
+  <a href="https://github.com/Seika139/zipper/releases/tag/v0.0.0">
+    <img alt="version" src="https://img.shields.io/badge/version-v0.0.0-white.svg">
+  </a>
+  &nbsp;&nbsp;
+  <a href="https://github.com/Seika139/zipper/actions/workflows/lint-markdown.yml">
+    <img alt="Markdown Lint" src="https://github.com/Seika139/zipper/actions/workflows/lint-markdown.yml/badge.svg">
+  </a>
+  &nbsp;&nbsp;
+  <a href="https://github.com/Seika139/zipper/actions/workflows/lint-yaml.yml">
+    <img alt="YAML Lint" src="https://github.com/Seika139/zipper/actions/workflows/lint-yaml.yml/badge.svg">
+  </a>
+</div>
+
 パスワードベースの暗号化 ZIP アーカイバです。
 ファイル内容だけでなく、ファイル名・ディレクトリ名の暗号化にも対応しています。
 
