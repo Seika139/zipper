@@ -1,8 +1,8 @@
 # zipper
 
 <div align="center">
-  <a href="https://github.com/Seika139/zipper/releases/tag/v0.0.0">
-    <img alt="version" src="https://img.shields.io/badge/version-v0.0.0-white.svg">
+  <a href="https://github.com/Seika139/zipper/releases/tag/v0.1.0">
+    <img alt="version" src="https://img.shields.io/badge/version-v0.1.0-white.svg">
   </a>
   &nbsp;&nbsp;
   <a href="https://github.com/Seika139/zipper/actions/workflows/lint-markdown.yml">
