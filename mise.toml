@@ -1,36 +1,46 @@
+[settings]
+install_before = "7d"
+
 [tools]
 python = "3.13"
 uv = "latest"
+rumdl = "latest"
 
 [tasks.init]
-description = "Install dependencies"
+description = "プロジェクトの初期設定をする"
 quiet = true
-run = "uv sync --all-extras"
+run = ["mise install", "uv sync --all-extras"]
 
 [tasks.upgrade]
-description = "Upgrade dependencies"
+description = "依存関係を最新にアップグレード"
 quiet = true
 run = 'uv sync --upgrade'
 
 [tasks.test]
-description = "Run tests"
+description = "ユニットテストを実行"
 quiet = true
 run = "uv run pytest tests/ -v"
 
 [tasks.check]
-description = "Run linter and type checker"
-run = ["uv run ruff check .", "uv run mypy ."]
+description = "コードスタイルとドキュメントスタイルをチェック"
+quiet = true
+run = ["uv run ruff check .", "uv run ruff format --check .", "rumdl check ."]
 
 [tasks.format]
-description = "Run ruff formatter"
-run = ["uv run ruff format .", "uv run ruff check . --fix"]
+quiet = true
+description = "ruff と rumdl でコードとドキュメントを自動整形"
+run = [
+  "uv run ruff format .",
+  "uv run ruff check . --fix",
+  "rumdl check --fix .",
+]
 
 [tasks.encrypt]
-description = "Encrypt a file or directory"
+description = "File や Directory をパスワード付き ZIP に圧縮"
 quiet = true
 run = "uv run python -m zipper -e -c {{arg(name='target')}}"
 
 [tasks.decrypt]
-description = "Decrypt an encrypted ZIP"
+description = "パスワード付き ZIP を解凍"
 quiet = true
 run = "uv run python -m zipper -x {{arg(name='target')}}"
