@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-04-24
+
 ### Security
 
 - Zip Slip 脆弱性を修正 (`..`, 絶対パス, ドライブ文字, 途中コンポーネントの symlink 経由での `extract_dir` 外への書き込みを拒否)
