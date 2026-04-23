@@ -1,12 +1,9 @@
 [project]
 name = "zipper"
-version = "0.1.0"
+version = "0.0.0"
 description = "Password-based encrypted ZIP archiver with filename encryption support"
 requires-python = ">=3.13"
-dependencies = [
-  "cryptography>=46.0.7,<47.0.0",
-  "pathspec>=0.12.1,<1.1.0",
-]
+dependencies = ["cryptography>=46.0.7,<47.0.0", "pathspec>=0.12.1,<1.1.0"]
 
 [tool.uv]
 package = true
@@ -22,11 +19,7 @@ include = ["zipper"]
 include = ["zipper"]
 
 [dependency-groups]
-dev = [
-  "mypy>=1.20.0,<2",
-  "pytest>=9.0.3",
-  "ruff>=0.15.9",
-]
+dev = ["mypy>=1.20.0,<2", "pytest>=9.0.3", "ruff>=0.15.9"]
 
 [tool.ruff]
 line-length = 88
@@ -71,10 +64,7 @@ ban-relative-imports = "all"
 max-complexity = 20
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = [
-  "S101",
-  "SLF001",
-]
+"tests/*" = ["S101", "SLF001"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
@@ -90,3 +80,18 @@ exclude = ["^build/", "^tmp/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.rumdl]
+respect_gitignore = true
+exclude = [".claude/**"]
+disable = [
+  "MD013", # 行の長さは自由
+  "MD024", # 重複した見出しを許可
+  "MD025", # 複数のトップレベル見出しを許可
+  "MD033", # HTML タグを許可
+  "MD036", # 強調表示の過剰使用を許可
+  "MD041", # ファイルの最初の行を見出しにする必要なし
+]
+
+[tool.rumdl.MD009]
+strict = true
