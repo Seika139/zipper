@@ -919,6 +919,160 @@ def test_metadata_salt_lookup_is_exact_match(tmp_path: Path) -> None:
     assert (extract_dir / "dir" / "metadata.salt").read_text() == "user data"
 
 
+def test_overwrite_existing_files_succeeds(tmp_path: Path) -> None:
+    """既存ファイルを ZIP の同名ファイルで上書き解凍できる(成功パス)。"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("new A", encoding="utf-8")
+    (src / "b.txt").write_text("new B", encoding="utf-8")
+    zip_path = create_secure_encrypted_zip(src, PASSWORD, tmp_path / "src.zip")
+
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "a.txt").write_text("old A", encoding="utf-8")
+    (target / "b.txt").write_text("old B", encoding="utf-8")
+    (target / "untouched.txt").write_text("KEEP", encoding="utf-8")
+
+    extract_secure_encrypted_zip(zip_path, PASSWORD, target)
+
+    assert (target / "a.txt").read_text() == "new A"
+    assert (target / "b.txt").read_text() == "new B"
+    assert (target / "untouched.txt").read_text() == "KEEP"
+
+
+def test_rollback_restores_overwritten_files_on_corrupt_entry(
+    tmp_path: Path,
+) -> None:
+    """途中の復号失敗で、既に上書き対象だった既存ファイルが完全復元される。"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("ZIP A", encoding="utf-8")
+    (src / "b.txt").write_text("ZIP B", encoding="utf-8")
+    zip_path = create_secure_encrypted_zip(src, PASSWORD, tmp_path / "src.zip")
+
+    rebuilt = tmp_path / "src_corrupt.zip"
+    with ZipFile(zip_path, "r") as src_zip, ZipFile(rebuilt, "w") as dst_zip:
+        salt_name = next(n for n in src_zip.namelist() if n.endswith("b.txt.salt"))
+        for info in src_zip.infolist():
+            if info.filename == salt_name:
+                continue
+            dst_zip.writestr(info, src_zip.read(info.filename))
+        dst_zip.writestr(salt_name, b"bad_salt")
+    rebuilt.replace(zip_path)
+
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "a.txt").write_text("ORIGINAL A", encoding="utf-8")
+    (target / "b.txt").write_text("ORIGINAL B", encoding="utf-8")
+    (target / "untouched.txt").write_text("KEEP", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="パスワードが間違っています"):
+        extract_secure_encrypted_zip(zip_path, PASSWORD, target)
+
+    assert (target / "a.txt").read_text() == "ORIGINAL A"
+    assert (target / "b.txt").read_text() == "ORIGINAL B"
+    assert (target / "untouched.txt").read_text() == "KEEP"
+
+
+def test_rollback_restores_existing_files_on_symlink_error(
+    tmp_path: Path,
+) -> None:
+    """extract_dir に symlink がある場合、Phase 0 で abort し既存ファイルは無傷。"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "inner").mkdir()
+    (src / "inner" / "file.txt").write_text("from zip", encoding="utf-8")
+    (src / "top.txt").write_text("zip top", encoding="utf-8")
+    zip_path = create_secure_encrypted_zip(src, PASSWORD, tmp_path / "src.zip")
+
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "top.txt").write_text("ORIGINAL TOP", encoding="utf-8")
+    (target / "untouched.txt").write_text("KEEP", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (target / "inner").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink を含むエントリ"):
+        extract_secure_encrypted_zip(zip_path, PASSWORD, target)
+
+    assert (target / "top.txt").read_text() == "ORIGINAL TOP"
+    assert (target / "untouched.txt").read_text() == "KEEP"
+    assert (target / "inner").is_symlink()
+    assert not (outside / "file.txt").exists()
+
+
+def test_rollback_leaves_no_staging_or_backup_directories(
+    tmp_path: Path,
+) -> None:
+    """エラー rollback 後、staging/backup の作業 dir が一切残らない。"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("A", encoding="utf-8")
+    zip_path = create_secure_encrypted_zip(src, PASSWORD, tmp_path / "src.zip")
+
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "a.txt").write_text("ORIGINAL", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="パスワードが間違っています"):
+        extract_secure_encrypted_zip(zip_path, b"wrong", target)
+
+    assert (target / "a.txt").read_text() == "ORIGINAL"
+    leftovers = [
+        p for p in target.parent.iterdir() if p.name.startswith(".target.zipper-")
+    ]
+    assert leftovers == []
+
+
+def test_success_leaves_no_staging_or_backup_directories(
+    tmp_path: Path,
+) -> None:
+    """成功時にも staging/backup の作業 dir が一切残らない。"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("A", encoding="utf-8")
+    (src / "b.txt").write_text("B", encoding="utf-8")
+    zip_path = create_secure_encrypted_zip(src, PASSWORD, tmp_path / "src.zip")
+
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "a.txt").write_text("OLD A", encoding="utf-8")
+
+    extract_secure_encrypted_zip(zip_path, PASSWORD, target)
+
+    leftovers = [
+        p for p in target.parent.iterdir() if p.name.startswith(".target.zipper-")
+    ]
+    assert leftovers == []
+    assert (target / "a.txt").read_text() == "A"
+    assert (target / "b.txt").read_text() == "B"
+
+
+def test_rollback_after_path_traversal_preserves_existing_files(
+    tmp_path: Path,
+) -> None:
+    """悪意のある file_mapping で abort 時、既存 dir 内の他ファイルは保護される。"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "good.txt").write_text("good", encoding="utf-8")
+    zip_path = create_secure_encrypted_zip(src, PASSWORD, tmp_path / "src.zip")
+    _tamper_file_mapping(
+        zip_path, PASSWORD, {"good.txt": "good.txt", "../escape.txt": "good.txt"}
+    )
+
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "keep.txt").write_text("keep", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="'\\.\\.' を含むエントリ"):
+        extract_secure_encrypted_zip(zip_path, PASSWORD, target)
+
+    assert (target / "keep.txt").read_text() == "keep"
+    assert not (target / "good.txt").exists()
+    assert not (tmp_path / "escape.txt").exists()
+
+
 def test_rejects_bogus_iterations_in_metadata(tmp_path: Path) -> None:
     """メタデータの kdf.iterations が未許可値なら拒否する。"""
     src = tmp_path / "src.txt"
