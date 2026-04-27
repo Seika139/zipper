@@ -1,8 +1,10 @@
 import base64
+import contextlib
 import json
 import logging
 import os
 import shutil
+import uuid
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -407,55 +409,147 @@ def _validate_iterations(value: object) -> int:
     return value
 
 
-def _decrypt_single_file(  # noqa: PLR0913, PLR0917
+def _validate_entry_paths(
+    file_mapping: dict[str, str],
+    extract_dir: Path,
+) -> dict[str, Path]:
+    """ZIP の全エントリパスを書き込み前に検証する。
+
+    `_safe_join` が不正パス(絶対、'..'、親 symlink)を検出すると ValueError を伝播する。
+
+    Returns:
+        original_path -> 検証済みの最終出力パス の辞書
+    """
+    output_paths: dict[str, Path] = {}
+    for original_path in file_mapping:
+        output_paths[original_path] = _safe_join(extract_dir, original_path)
+    return output_paths
+
+
+def _decrypt_entry_to_path(
     zf: zipfile.ZipFile,
-    original_path: str,
     encrypted_name: str,
     password: bytes,
-    extract_dir: Path,
-    created_paths: set[Path],
     iterations: int,
+    output_path: Path,
 ) -> None:
-    """ZIP内の1ファイルを復号して書き出す。
+    """ZIP 内の暗号化エントリを復号して `output_path` に書き出す。
 
     Raises:
-        ValueError: 復号に失敗した場合(パスワード不正)
+        ValueError: salt/encrypted エントリの欠落、または復号失敗
     """
     encrypted_filename = f"{encrypted_name}.encrypted"
     salt_filename = f"{encrypted_name}.salt"
     namelist = zf.namelist()
 
     if salt_filename not in namelist or encrypted_filename not in namelist:
-        logger.warning("ソルトまたはファイル欠落: %s", original_path)
-        return
+        msg = f"ZIP からエントリが欠落しています: {encrypted_name}"
+        raise ValueError(msg)
 
     salt = zf.read(salt_filename)
-    temp_encrypted = extract_dir / "temp_encrypted"
+    encrypted_data = zf.read(encrypted_filename)
 
-    output_file_path = _safe_join(extract_dir, original_path)
+    key, _ = generate_key_from_password(password, salt, iterations)
+    try:
+        decrypted = Fernet(key).decrypt(encrypted_data)
+    except InvalidToken as e:
+        msg = "パスワードが間違っています。"
+        raise ValueError(msg) from e
 
-    parent = output_file_path.parent
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(decrypted)
+
+
+def _commit_one_file(  # noqa: PLR0913, PLR0917
+    staging_path: Path,
+    final_path: Path,
+    extract_dir: Path,
+    backup_dir: Path,
+    backups: dict[Path, Path],
+    placed_files: list[Path],
+    created_dirs: list[Path],
+) -> None:
+    """Staging のファイルを最終位置へ移動する。既存ファイルは backup_dir に退避する。"""
+    parent = final_path.parent
     missing_ancestors: list[Path] = []
     probe = parent
-    while not probe.exists():
+    extract_parent = extract_dir.parent
+    while not probe.exists() and probe != extract_parent:
         missing_ancestors.append(probe)
         probe = probe.parent
     if missing_ancestors:
         parent.mkdir(parents=True, exist_ok=True)
-        created_paths.update(missing_ancestors)
+        created_dirs.extend(reversed(missing_ancestors))
 
-    try:
-        Path(temp_encrypted).write_bytes(zf.read(encrypted_filename))
-        created_paths.add(temp_encrypted)
-        decrypt_file(temp_encrypted, output_file_path, password, salt, iterations)
-        created_paths.add(output_file_path)
-        logger.info("✅ 復号完了: '%s'", original_path)
-    except InvalidToken as e:
-        msg = "パスワードが間違っています。"
-        raise ValueError(msg) from e
-    finally:
-        if temp_encrypted.exists():
-            temp_encrypted.unlink()
+    if final_path.exists() or final_path.is_symlink():
+        rel = final_path.relative_to(extract_dir)
+        backup_path = backup_dir / rel
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        final_path.rename(backup_path)
+        backups[final_path] = backup_path
+
+    staging_path.rename(final_path)
+    placed_files.append(final_path)
+
+
+def _undo_placed_files(placed_files: list[Path], backups: dict[Path, Path]) -> None:
+    for placed in placed_files:
+        if placed in backups:
+            continue
+        if placed.exists() or placed.is_symlink():
+            try:
+                placed.unlink()
+            except OSError:
+                logger.exception("rollback: 配置ファイルの削除に失敗: %s", placed)
+
+
+def _restore_backups(backups: dict[Path, Path]) -> None:
+    for final_path, backup_path in backups.items():
+        if not (backup_path.exists() or backup_path.is_symlink()):
+            continue
+        try:
+            if final_path.exists() or final_path.is_symlink():
+                final_path.unlink()
+            backup_path.rename(final_path)
+        except OSError:
+            logger.exception(
+                "rollback: バックアップの復元に失敗: %s ← %s",
+                final_path,
+                backup_path,
+            )
+
+
+def _rmdir_created_dirs(created_dirs: list[Path]) -> None:
+    for d in sorted(created_dirs, key=lambda p: len(p.parts), reverse=True):
+        if d.exists():
+            with contextlib.suppress(OSError):
+                d.rmdir()
+
+
+def _rollback_extract(  # noqa: PLR0913, PLR0917
+    placed_files: list[Path],
+    backups: dict[Path, Path],
+    created_dirs: list[Path],
+    staging_dir: Path,
+    backup_dir: Path,
+    extract_dir: Path,
+    extract_dir_pre_existed: bool,
+) -> None:
+    """途中失敗時に extract_dir を可能な限り元の状態に戻す。
+
+    順序: 配置ファイル削除 → backup を rename で復元 → 新規作成 dir を rmdir
+    → staging/backup dir を rmtree → pre-existed でなければ extract_dir も削除
+    """
+    _undo_placed_files(placed_files, backups)
+    _restore_backups(backups)
+    _rmdir_created_dirs(created_dirs)
+
+    for d in (staging_dir, backup_dir):
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
+
+    if not extract_dir_pre_existed and extract_dir.exists():
+        shutil.rmtree(extract_dir, ignore_errors=True)
 
 
 def extract_secure_encrypted_zip(
@@ -465,6 +559,10 @@ def extract_secure_encrypted_zip(
 ) -> None:
     """暗号化ZIPを解凍し、内容とファイル名を復号する。
 
+    既存の `extract_dir` への上書き解凍は merge セマンティクスで動作する:
+    ZIP に含まれるファイルだけが対象になり、ZIP に含まれない既存ファイルは
+    保護される。途中失敗時はバックアップから完全復元される。
+
     Args:
         zip_filepath: 解凍するZIPファイルのパス
         password: 復号パスワード
@@ -473,7 +571,7 @@ def extract_secure_encrypted_zip(
     Raises:
         FileNotFoundError: ZIPファイルが見つからない場合
         zipfile.BadZipFile: 無効なZIPファイルの場合
-        ValueError: パスワードが間違っている場合
+        ValueError: パスワードが間違っているか、エントリパスが不正な場合
     """
     if not zip_filepath.exists():
         msg = f"指定されたファイル '{zip_filepath}' が見つかりません。"
@@ -481,7 +579,7 @@ def extract_secure_encrypted_zip(
 
     try:
         with zipfile.ZipFile(zip_filepath, "r") as zf:
-            if "metadata.encrypted" not in zf.namelist():
+            if METADATA_ENCRYPTED_NAME not in zf.namelist():
                 msg = (
                     f"'{zip_filepath}' は暗号化ZIPファイルではありません。"
                     "このプログラムで作成された暗号化ZIPファイルのみを"
@@ -495,36 +593,59 @@ def extract_secure_encrypted_zip(
     if extract_dir is None:
         extract_dir = zip_filepath.parent / zip_filepath.stem.replace("_encrypted", "")
 
-    created_paths: set[Path] = set()
+    extract_dir_pre_existed = extract_dir.exists()
+    rand = uuid.uuid4().hex[:12]
+    staging_dir = extract_dir.parent / f".{extract_dir.name}.zipper-staging-{rand}"
+    backup_dir = extract_dir.parent / f".{extract_dir.name}.zipper-bak-{rand}"
 
-    def cleanup() -> None:
-        for p in sorted(created_paths, key=lambda x: len(x.parts), reverse=True):
-            if p.exists():
-                if p.is_file():
-                    p.unlink()
-                else:
-                    shutil.rmtree(p)
+    placed_files: list[Path] = []
+    backups: dict[Path, Path] = {}
+    created_dirs: list[Path] = []
 
     try:
-        if not extract_dir.exists():
-            extract_dir.mkdir(parents=True, exist_ok=True)
-            created_paths.add(extract_dir)
-
         with zipfile.ZipFile(zip_filepath, "r") as zf:
             metadata, file_iterations = _load_metadata(zf, password)
-            file_mapping = metadata["file_mapping"]
+            file_mapping: dict[str, str] = metadata["file_mapping"]
 
+            if not extract_dir_pre_existed:
+                extract_dir.mkdir(parents=True, exist_ok=True)
+
+            output_paths = _validate_entry_paths(file_mapping, extract_dir)
+
+            staging_dir.mkdir(parents=True, exist_ok=True)
+            staging_files: dict[str, Path] = {}
             for original_path, encrypted_name in file_mapping.items():
-                _decrypt_single_file(
-                    zf,
-                    original_path,
-                    encrypted_name,
-                    password,
+                staging_path = staging_dir / original_path
+                _decrypt_entry_to_path(
+                    zf, encrypted_name, password, file_iterations, staging_path
+                )
+                staging_files[original_path] = staging_path
+                logger.info("✅ 復号完了: '%s'", original_path)
+
+            for original_path, staging_path in staging_files.items():
+                _commit_one_file(
+                    staging_path,
+                    output_paths[original_path],
                     extract_dir,
-                    created_paths,
-                    file_iterations,
+                    backup_dir,
+                    backups,
+                    placed_files,
+                    created_dirs,
                 )
 
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir)
+
     except BaseException:
-        cleanup()
+        _rollback_extract(
+            placed_files,
+            backups,
+            created_dirs,
+            staging_dir,
+            backup_dir,
+            extract_dir,
+            extract_dir_pre_existed,
+        )
         raise
