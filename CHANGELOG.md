@@ -10,6 +10,7 @@
 ### Fixed
 
 - `extract_secure_encrypted_zip` が既存ディレクトリへの上書き解凍途中で失敗した際、上書き対象だった既存ファイルを `cleanup()` が `unlink()` してデータを失う問題を修正。二相コミット方式 (staging への復号 → 既存ファイルを backup へ退避してから commit → 失敗時に backup から rename で完全復元) に書き換えた
+- `extract_secure_encrypted_zip` の成功 commit 後の作業 dir 撤去 (`shutil.rmtree`) が失敗した場合、その例外が `try` ブロックを抜けて rollback を誤発火させ、commit 完了済みファイルを破壊する経路があった。cleanup を `finally` に集約し `ignore_errors=True` で握りつぶすことで封じた
 
 ### Changed
 

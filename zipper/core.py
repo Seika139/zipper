@@ -526,27 +526,22 @@ def _rmdir_created_dirs(created_dirs: list[Path]) -> None:
                 d.rmdir()
 
 
-def _rollback_extract(  # noqa: PLR0913, PLR0917
+def _rollback_extract(
     placed_files: list[Path],
     backups: dict[Path, Path],
     created_dirs: list[Path],
-    staging_dir: Path,
-    backup_dir: Path,
     extract_dir: Path,
     extract_dir_pre_existed: bool,
 ) -> None:
     """途中失敗時に extract_dir を可能な限り元の状態に戻す。
 
     順序: 配置ファイル削除 → backup を rename で復元 → 新規作成 dir を rmdir
-    → staging/backup dir を rmtree → pre-existed でなければ extract_dir も削除
+    → pre-existed でなければ extract_dir も削除。staging/backup dir の撤去は
+    呼び出し側の `finally` に集約してある(rollback の二重起動を避けるため)。
     """
     _undo_placed_files(placed_files, backups)
     _restore_backups(backups)
     _rmdir_created_dirs(created_dirs)
-
-    for d in (staging_dir, backup_dir):
-        if d.exists():
-            shutil.rmtree(d, ignore_errors=True)
 
     if not extract_dir_pre_existed and extract_dir.exists():
         shutil.rmtree(extract_dir, ignore_errors=True)
@@ -633,19 +628,20 @@ def extract_secure_encrypted_zip(
                     created_dirs,
                 )
 
-        if backup_dir.exists():
-            shutil.rmtree(backup_dir)
-        if staging_dir.exists():
-            shutil.rmtree(staging_dir)
-
     except BaseException:
         _rollback_extract(
             placed_files,
             backups,
             created_dirs,
-            staging_dir,
-            backup_dir,
             extract_dir,
             extract_dir_pre_existed,
         )
         raise
+    finally:
+        # 成功・失敗どちらでも作業 dir は安全に撤去する。
+        # ここで例外を上げると(commit 完了後の rmtree 失敗で) 既に正常配置
+        # されたファイルがロールバックの対象になってしまうため、
+        # ignore_errors=True で握りつぶす。
+        for d in (staging_dir, backup_dir):
+            if d.exists():
+                shutil.rmtree(d, ignore_errors=True)
