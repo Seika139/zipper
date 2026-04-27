@@ -7,6 +7,21 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `extract_secure_encrypted_zip` が既存ディレクトリへの上書き解凍途中で失敗した際、上書き対象だった既存ファイルを `cleanup()` が `unlink()` してデータを失う問題を修正。二相コミット方式 (staging への復号 → 既存ファイルを backup へ退避してから commit → 失敗時に backup から rename で完全復元) に書き換えた
+- `extract_secure_encrypted_zip` の成功 commit 後の作業 dir 撤去 (`shutil.rmtree`) が失敗した場合、その例外が `try` ブロックを抜けて rollback を誤発火させ、commit 完了済みファイルを破壊する経路があった。cleanup を `finally` に集約し `ignore_errors=True` で握りつぶすことで封じた
+- `extract_dir` が `tmp/a/b/out` のような新規ネスト先のとき、失敗時の rollback が `extract_dir` 自身しか削除せず祖先 dir (`tmp/a/b`) を空のまま残していた問題を修正。`mkdir(parents=True)` で作られる祖先も `created_dirs` に積み、deepest-first の rmdir で all-or-nothing を保つ
+
+### Changed
+
+- `extract_secure_encrypted_zip` が解凍前に全エントリのパスを `_safe_join` で検証するように変更 (Phase 0 pre-flight validation)。途中で symlink/path traversal を検出しても **書き込みゼロのまま abort** する
+- 既存ディレクトリへの解凍は merge セマンティクスとして明文化: ZIP に含まれるファイルだけが対象になり、ZIP に含まれない既存ファイルは保護される
+
+### Added
+
+- ロールバックの不変条件を検証するテストを追加 (上書き失敗時の既存ファイル復元、symlink エラー時の既存ファイル保護、staging/backup の作業 dir リーク検出、path traversal abort 後の既存ファイル保護)
+
 ## [0.1.0] - 2026-04-24
 
 ### Security
