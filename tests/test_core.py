@@ -2,6 +2,7 @@ import base64
 import binascii
 import json
 import re
+import shutil
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -1047,6 +1048,42 @@ def test_success_leaves_no_staging_or_backup_directories(
     assert leftovers == []
     assert (target / "a.txt").read_text() == "A"
     assert (target / "b.txt").read_text() == "B"
+
+
+def test_cleanup_failure_does_not_trigger_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """成功 commit 後の cleanup 失敗で配置済みファイルが消えないことを検証する。
+
+    成功時の作業 dir 撤去 (`shutil.rmtree`) が何らかの理由で失敗した場合に、
+    例外が `try` を抜けて rollback 経路に入ると、commit 完了済みのユーザー
+    データを破壊しかねない。`finally` + `ignore_errors=True` で封じる。
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("ZIP A", encoding="utf-8")
+    (src / "b.txt").write_text("ZIP B", encoding="utf-8")
+    zip_path = create_secure_encrypted_zip(src, PASSWORD, tmp_path / "src.zip")
+
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "a.txt").write_text("OLD A", encoding="utf-8")
+
+    real_rmtree = shutil.rmtree
+
+    def flaky_rmtree(path: str | Path, ignore_errors: bool = False) -> None:
+        if "zipper-staging-" in str(path) and not ignore_errors:
+            msg = "simulated rmtree failure"
+            raise OSError(msg)
+        real_rmtree(path, ignore_errors=ignore_errors)
+
+    monkeypatch.setattr("zipper.core.shutil.rmtree", flaky_rmtree)
+
+    extract_secure_encrypted_zip(zip_path, PASSWORD, target)
+
+    assert (target / "a.txt").read_text() == "ZIP A"
+    assert (target / "b.txt").read_text() == "ZIP B"
 
 
 def test_rollback_after_path_traversal_preserves_existing_files(
