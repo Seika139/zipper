@@ -530,21 +530,18 @@ def _rollback_extract(
     placed_files: list[Path],
     backups: dict[Path, Path],
     created_dirs: list[Path],
-    extract_dir: Path,
-    extract_dir_pre_existed: bool,
 ) -> None:
     """途中失敗時に extract_dir を可能な限り元の状態に戻す。
 
-    順序: 配置ファイル削除 → backup を rename で復元 → 新規作成 dir を rmdir
-    → pre-existed でなければ extract_dir も削除。staging/backup dir の撤去は
-    呼び出し側の `finally` に集約してある(rollback の二重起動を避けるため)。
+    順序: 配置ファイル削除 → backup を rename で復元 → 新規作成 dir を rmdir。
+    `created_dirs` には extract_dir 自身および `mkdir(parents=True)` で
+    暗黙に作られた祖先も含まれているため、deepest-first の rmdir で全ての
+    新規 dir が処理される。staging/backup dir の撤去は呼び出し側の
+    `finally` に集約してある(rollback の二重起動を避けるため)。
     """
     _undo_placed_files(placed_files, backups)
     _restore_backups(backups)
     _rmdir_created_dirs(created_dirs)
-
-    if not extract_dir_pre_existed and extract_dir.exists():
-        shutil.rmtree(extract_dir, ignore_errors=True)
 
 
 def extract_secure_encrypted_zip(
@@ -588,7 +585,6 @@ def extract_secure_encrypted_zip(
     if extract_dir is None:
         extract_dir = zip_filepath.parent / zip_filepath.stem.replace("_encrypted", "")
 
-    extract_dir_pre_existed = extract_dir.exists()
     rand = uuid.uuid4().hex[:12]
     staging_dir = extract_dir.parent / f".{extract_dir.name}.zipper-staging-{rand}"
     backup_dir = extract_dir.parent / f".{extract_dir.name}.zipper-bak-{rand}"
@@ -602,7 +598,14 @@ def extract_secure_encrypted_zip(
             metadata, file_iterations = _load_metadata(zf, password)
             file_mapping: dict[str, str] = metadata["file_mapping"]
 
-            if not extract_dir_pre_existed:
+            if not extract_dir.exists():
+                # mkdir(parents=True) で新規に作られる祖先 (extract_dir 自身を
+                # 含む) を全て記録しておく。途中失敗時のロールバックで
+                # deepest-first に rmdir することで all-or-nothing を保つ。
+                probe = extract_dir
+                while not probe.exists() and probe != probe.parent:
+                    created_dirs.append(probe)
+                    probe = probe.parent
                 extract_dir.mkdir(parents=True, exist_ok=True)
 
             output_paths = _validate_entry_paths(file_mapping, extract_dir)
@@ -629,13 +632,7 @@ def extract_secure_encrypted_zip(
                 )
 
     except BaseException:
-        _rollback_extract(
-            placed_files,
-            backups,
-            created_dirs,
-            extract_dir,
-            extract_dir_pre_existed,
-        )
+        _rollback_extract(placed_files, backups, created_dirs)
         raise
     finally:
         # 成功・失敗どちらでも作業 dir は安全に撤去する。
