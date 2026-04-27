@@ -1050,6 +1050,28 @@ def test_success_leaves_no_staging_or_backup_directories(
     assert (target / "b.txt").read_text() == "B"
 
 
+def test_rollback_removes_newly_created_extract_ancestors(
+    tmp_path: Path,
+) -> None:
+    """`mkdir(parents=True)` で作られた祖先 dir も rollback で消えることを検証する。
+
+    `extract_dir = tmp/outer/middle/inner` のような新規ネスト先で失敗した時、
+    `outer` や `outer/middle` が空 dir として残ると all-or-nothing が崩れる。
+    """
+    src = tmp_path / "src.txt"
+    src.write_text("data", encoding="utf-8")
+    zip_path = create_secure_encrypted_zip(src, PASSWORD, tmp_path / "src.zip")
+
+    extract_dir = tmp_path / "outer" / "middle" / "inner"
+
+    with pytest.raises(ValueError, match="パスワードが間違っています"):
+        extract_secure_encrypted_zip(zip_path, b"wrong", extract_dir)
+
+    assert not extract_dir.exists()
+    assert not (tmp_path / "outer" / "middle").exists()
+    assert not (tmp_path / "outer").exists()
+
+
 def test_cleanup_failure_does_not_trigger_rollback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
