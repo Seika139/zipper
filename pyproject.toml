@@ -19,7 +19,7 @@ include = ["zipper"]
 include = ["zipper"]
 
 [dependency-groups]
-dev = ["mypy>=2.1.0,<3", "pytest>=9.0.3", "ruff>=0.15.13"]
+dev = ["mypy>=2.1.0,<3", "pytest>=9.0.3", "ruff>=0.15.14"]
 
 [tool.ruff]
 line-length = 88
@@ -50,6 +50,7 @@ ignore = [
   "PLR0915",
   "PLR2004",
   "PLR6301",
+  "PLW0717",
   "T201",
   "TC001",
   "TC002",
