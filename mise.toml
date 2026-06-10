@@ -40,9 +40,11 @@ description = "File や Directory をパスワード付き ZIP に圧縮"
 quiet = true
 usage = 'arg "<target>" help="圧縮対象の File または Directory"'
 run = "uv run python -m zipper -e -c ${usage_target}"
+run_windows = 'uv run python -m zipper -e -c %usage_target%'
 
 [tasks.decrypt]
 description = "パスワード付き ZIP を解凍"
 quiet = true
 usage = 'arg "<target>" help="解凍対象の ZIP File"'
 run = "uv run python -m zipper -x ${usage_target}"
+run_windows = 'uv run python -m zipper -x %usage_target%'
