@@ -1,0 +1,16 @@
+# mdformat (markdown formatter) configuration.
+#
+# 役割分担: lint/style は rumdl、テーブルの桁揃え (rumdl にはできない) は
+# mdformat-gfm が担う。両者が互いに再整形しないよう設定を揃えている。
+
+# 長い行を折り返さない。
+wrap = "keep"
+
+# 番号付きリストを 1. 2. 3. の連番のまま保持する (既定の全 1. 化を抑止)。
+number = true
+
+# mdformat は .gitignore を見ないため、仮想環境などを明示的に除外する。
+exclude = [
+  ".venv/**",
+  "**/.venv/**",
+]

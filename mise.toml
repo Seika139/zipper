@@ -24,7 +24,12 @@ run = "uv run pytest tests/ -v"
 [tasks.check]
 description = "コードスタイルとドキュメントスタイルをチェック"
 quiet = true
-run = ["uv run ruff check .", "uv run ruff format --check .", "rumdl check ."]
+run = [
+  "uv run ruff check .",
+  "uv run ruff format --check .",
+  "uv run mdformat --check .",
+  "rumdl check .",
+]
 
 [tasks.format]
 quiet = true
@@ -32,6 +37,7 @@ description = "ruff と rumdl でコードとドキュメントを自動整形"
 run = [
   "uv run ruff format .",
   "uv run ruff check . --fix",
+  "uv run mdformat .",
   "rumdl check --fix .",
 ]
 
