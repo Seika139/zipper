@@ -87,7 +87,7 @@ def main() -> None:
     except (KeyboardInterrupt, EOFError):
         print("\nキャンセルしました。")
         sys.exit(130)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:  # ruff:ignore[blind-except]
         print(f"エラー: {e}")
         sys.exit(1)
 

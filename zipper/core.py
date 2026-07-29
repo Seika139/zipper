@@ -328,7 +328,7 @@ def create_secure_encrypted_zip(
                 msg = (
                     f"指定パス '{target}' はファイルまたはディレクトリではありません。"
                 )
-                raise ValueError(msg)  # noqa: TRY301
+                raise ValueError(msg)  # ruff:ignore[raise-within-try]
 
             metadata = {
                 "version": METADATA_VERSION,
@@ -402,7 +402,7 @@ def _validate_iterations(value: object) -> int:
     """
     if isinstance(value, bool) or not isinstance(value, int):
         msg = f"未対応の kdf.iterations です: {value!r}"
-        raise ValueError(msg)  # noqa: TRY004 - untrusted ZIP metadata, uniform ValueError
+        raise ValueError(msg)  # ruff:ignore[type-check-without-type-error] - untrusted ZIP metadata, uniform ValueError
     if value not in ALLOWED_PBKDF2_ITERATIONS:
         msg = f"未対応の kdf.iterations です: {value}"
         raise ValueError(msg)
@@ -460,7 +460,7 @@ def _decrypt_entry_to_path(
     output_path.write_bytes(decrypted)
 
 
-def _commit_one_file(  # noqa: PLR0913, PLR0917
+def _commit_one_file(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
     staging_path: Path,
     final_path: Path,
     extract_dir: Path,
