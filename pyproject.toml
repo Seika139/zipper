@@ -35,33 +35,33 @@ preview = true
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-  "CPY001",
-  "COM812",
-  "D100",
-  "D101",
-  "D102",
-  "D103",
-  "D105",
-  "D107",
-  "D203",
-  "D213",
-  "D415",
-  "EM101",
-  "EM102",
-  "FBT001",
-  "FBT002",
-  "FBT003",
-  "PLR0911",
-  "PLR0914",
-  "PLR0915",
-  "PLR2004",
-  "PLR6301",
-  "PLW0717",
-  "T201",
-  "TC001",
-  "TC002",
-  "TC003",
-  "TRY003",
+  "missing-copyright-notice",
+  "missing-trailing-comma",
+  "undocumented-public-module",
+  "undocumented-public-class",
+  "undocumented-public-method",
+  "undocumented-public-function",
+  "undocumented-magic-method",
+  "undocumented-public-init",
+  "incorrect-blank-line-before-class",
+  "multi-line-summary-second-line",
+  "missing-terminal-punctuation",
+  "raw-string-in-exception",
+  "f-string-in-exception",
+  "boolean-type-hint-positional-argument",
+  "boolean-default-value-positional-argument",
+  "boolean-positional-value-in-call",
+  "too-many-return-statements",
+  "too-many-locals",
+  "too-many-statements",
+  "magic-value-comparison",
+  "no-self-use",
+  "too-many-statements-in-try-clause",
+  "print",
+  "typing-only-first-party-import",
+  "typing-only-third-party-import",
+  "typing-only-standard-library-import",
+  "raise-vanilla-args",
 ]
 
 [tool.ruff.lint.flake8-tidy-imports]
@@ -71,7 +71,7 @@ ban-relative-imports = "all"
 max-complexity = 20
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "SLF001"]
+"tests/*" = ["assert", "private-member-access"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
