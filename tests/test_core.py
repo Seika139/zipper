@@ -845,13 +845,15 @@ def test_rejects_absolute_path_entry(tmp_path: Path) -> None:
     zip_path = tmp_path / "absolute.zip"
     create_secure_encrypted_zip(src, PASSWORD, zip_path)
 
-    _tamper_file_mapping(zip_path, PASSWORD, {"/tmp/evil.txt": "src.txt"})  # ruff:ignore[hardcoded-temp-file]
+    # プラットフォーム依存の絶対パス (Windows のドライブ文字等) を避け、
+    # POSIX ルートのエントリ名で固定する。
+    _tamper_file_mapping(zip_path, PASSWORD, {"/evil.txt": "src.txt"})
 
     extract_dir = tmp_path / "absolute_extract"
     with pytest.raises(ValueError, match="絶対パスのエントリ"):
         extract_secure_encrypted_zip(zip_path, PASSWORD, extract_dir)
 
-    assert not Path("/tmp/evil.txt").exists()  # ruff:ignore[hardcoded-temp-file]
+    assert not extract_dir.exists()
 
 
 def test_rejects_symlink_in_extract_path(tmp_path: Path) -> None:
