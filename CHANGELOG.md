@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Dependabot が作成した PR のうち CI が通ったものを自動マージする `dependabot-auto-merge.yml` を追加。`Seika139/.github` の共通ワークフローを呼び出すだけの構成で、対象は共通ワークフロー側のデフォルト設定により patch と minor の更新のみとし、major は手動でマージする
+
 ### Fixed
 
 - `extract_secure_encrypted_zip` が既存ディレクトリへの上書き解凍途中で失敗した際、上書き対象だった既存ファイルを `cleanup()` が `unlink()` してデータを失う問題を修正。二相コミット方式 (staging への復号 → 既存ファイルを backup へ退避してから commit → 失敗時に backup から rename で完全復元) に書き換えた
