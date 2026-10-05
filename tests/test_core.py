@@ -724,6 +724,7 @@ def test_metadata_records_version_and_iterations(tmp_path: Path) -> None:
     assert metadata["version"] >= 2
     assert metadata["kdf"]["algorithm"] == "pbkdf2-sha256"
     assert metadata["kdf"]["iterations"] == 600_000
+    assert "extra" not in metadata
 
 
 def test_extract_legacy_metadata_without_version(tmp_path: Path) -> None:

@@ -1,13 +1,20 @@
 """`--git-diff` モード (`list_git_changed_files` と `files` 経由の create) のテスト。"""
 
+import json
 import os
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
+from cryptography.fernet import Fernet
 
 from zipper.__main__ import list_git_changed_files
-from zipper.core import create_secure_encrypted_zip, extract_secure_encrypted_zip
+from zipper.core import (
+    create_secure_encrypted_zip,
+    extract_secure_encrypted_zip,
+    generate_key_from_password,
+)
 
 PASSWORD = b"test_password"
 
@@ -206,6 +213,31 @@ def test_git_add_f_includes_gitignored_file_via_files(git_repo: Path) -> None:
     extract_dir = git_repo.parent / "extracted_forced"
     extract_secure_encrypted_zip(zip_path, PASSWORD, extract_dir)
     assert (extract_dir / "ignored.txt").read_text() == "forced"
+
+
+def test_extra_metadata_is_stored_under_extra_key(tmp_path: Path) -> None:
+    """`extra_metadata` が metadata.encrypted の `extra` キーに実際に格納される。"""
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "a.txt").write_text("A", encoding="utf-8")
+
+    zip_path = create_secure_encrypted_zip(
+        root,
+        PASSWORD,
+        tmp_path / "with_extra.zip",
+        files=["a.txt"],
+        extra_metadata={"git": {"head": "deadbeef", "mode": "worktree"}},
+    )
+
+    with ZipFile(zip_path, "r") as zf:
+        metadata_salt = zf.read(
+            next(n for n in zf.namelist() if n.endswith("metadata.salt"))
+        )
+        encrypted_metadata = zf.read("metadata.encrypted")
+
+    key, _ = generate_key_from_password(PASSWORD, metadata_salt)
+    metadata = json.loads(Fernet(key).decrypt(encrypted_metadata).decode("utf-8"))
+    assert metadata["extra"] == {"git": {"head": "deadbeef", "mode": "worktree"}}
 
 
 def test_create_extract_roundtrip_with_files(tmp_path: Path) -> None:
