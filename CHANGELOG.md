@@ -10,6 +10,9 @@
 ### Added
 
 - Dependabot が作成した PR のうち CI が通ったものを自動マージする `dependabot-auto-merge.yml` を追加。`Seika139/.github` の共通ワークフローを呼び出すだけの構成で、対象は共通ワークフロー側のデフォルト設定により patch と minor の更新のみとし、major は手動でマージする
+- `python -m zipper -c` に `--git-diff [staged|worktree]` を追加。git の差分になっているファイルだけを暗号化 ZIP に入れられるようにした。比較先は HEAD 固定で、`worktree` (デフォルト) はステージ済み・未ステージ・未追跡ファイルすべて、`staged` はステージ済みのみを対象にする。`mise run encrypt` にも同名のオプション flag を追加した
+- `create_secure_encrypted_zip` に `files` と `extra_metadata` を追加。`files` を指定すると gitignore ウォークをスキップして列挙されたファイルだけを圧縮できる。`extra_metadata` は metadata の `extra` キーに opaque な値として格納される
+- ロールバックの不変条件を検証するテストを追加 (上書き失敗時の既存ファイル復元、symlink エラー時の既存ファイル保護、staging/backup の作業 dir リーク検出、path traversal abort 後の既存ファイル保護)
 
 ### Fixed
 
@@ -21,10 +24,6 @@
 
 - `extract_secure_encrypted_zip` が解凍前に全エントリのパスを `_safe_join` で検証するように変更 (Phase 0 pre-flight validation)。途中で symlink/path traversal を検出しても **書き込みゼロのまま abort** する
 - 既存ディレクトリへの解凍は merge セマンティクスとして明文化: ZIP に含まれるファイルだけが対象になり、ZIP に含まれない既存ファイルは保護される
-
-### Added
-
-- ロールバックの不変条件を検証するテストを追加 (上書き失敗時の既存ファイル復元、symlink エラー時の既存ファイル保護、staging/backup の作業 dir リーク検出、path traversal abort 後の既存ファイル保護)
 
 ## [0.1.0] - 2026-04-24
 

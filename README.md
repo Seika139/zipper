@@ -48,7 +48,15 @@ python -m zipper -c -e /path/to/target
 
 # 復号
 python -m zipper -x /path/to/archive_encrypted.zip
+
+# git 差分モード (staged + unstaged + untracked をまとめて圧縮)
+python -m zipper -c /path/to/target --git-diff
+
+# git 差分モード (staged のみ)
+python -m zipper -c /path/to/target --git-diff staged
 ```
+
+`--git-diff` は値を省略可能なオプションのため、`target` より後ろに置いてください。先に置くとパスを MODE の値として解釈してしまい、エラーになります。
 
 ### mise タスク
 
@@ -57,6 +65,10 @@ python -m zipper -x /path/to/archive_encrypted.zip
 ```bash
 mise run encrypt /path/to/target
 mise run decrypt /path/to/archive_encrypted.zip
+
+# git 差分モード
+mise run encrypt /path/to/target --git-diff worktree
+mise run encrypt /path/to/target --git-diff staged
 ```
 
 ### ライブラリとして
@@ -108,6 +120,14 @@ argparse 受領後に `Path.resolve()` されるため結果的にカレント�
 - 対象ディレクトリ配下に `.gitignore` がある場合、そのルールに従って除外されます。
 - **空ディレクトリは ZIP に含まれません**。`_add_file` がファイル単位でのみエントリを書き込む仕様のため、復号後に空だったディレクトリは再現されません。
 - **シンボリックリンクはリンク先の内容として扱われます**。`Path.is_file()` が symlink-to-file に対して True を返すため、リンク先の内容がコピーされ、リンク自体は保持されません。
+
+### git 差分モード
+
+- `--git-diff [staged|worktree]` で、git の差分になっているファイルだけを ZIP に入れられる。比較先は常に HEAD。
+- `staged`: ステージ済みの差分のみを対象にする。
+- `worktree` (省略時のデフォルト): ステージ済み・未ステージ・未追跡ファイルすべての差分を対象にする。
+- 削除されたファイルは ZIP に伝搬しない。ZIP は削除を表現できないため、extract 側は既存の merge セマンティクスのまま動作する(ZIP に含まれないファイルは保護され、削除は再現されない)。
+- `staged` モードでも、ZIP に実際に入る内容は **working tree のもの** であり、index にステージされた内容ではない(同一ファイルに staged な変更と unstaged な変更が両方ある場合、working tree の内容が入る)。
 
 ### 後方互換性
 

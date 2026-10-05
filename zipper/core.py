@@ -6,6 +6,7 @@ import os
 import shutil
 import uuid
 import zipfile
+from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -28,6 +29,37 @@ METADATA_SALT_NAME = "metadata.salt"
 RESERVED_NAMES = frozenset({METADATA_ENCRYPTED_NAME, METADATA_SALT_NAME})
 
 
+def _validate_relative_entry(entry: str) -> PurePosixPath:
+    """エントリパスが相対パスとして安全かを検証する。
+
+    `_safe_join` (extract 側) と `files` 検証 (create 側) の両方から呼ばれる、
+    検証アルゴリズムの唯一の owner。拒否するのは以下:
+    - 絶対パス (POSIX の `/`, Windows のドライブ文字)
+    - `..` を含むパス
+    - 空パス
+
+    Returns:
+        正規化された PurePosixPath
+
+    Raises:
+        ValueError: 不正なエントリパスを検出した場合
+    """
+    normalized = entry.replace("\\", "/")
+    rel = PurePosixPath(normalized)
+
+    if rel.is_absolute() or rel.drive:
+        msg = f"絶対パスのエントリは許可されていません: {entry}"
+        raise ValueError(msg)
+    if any(part == ".." for part in rel.parts):
+        msg = f"'..' を含むエントリは許可されていません: {entry}"
+        raise ValueError(msg)
+    if not rel.parts:
+        msg = f"空のエントリパスは許可されていません: {entry}"
+        raise ValueError(msg)
+
+    return rel
+
+
 def _safe_join(base: Path, entry_path: str) -> Path:
     """ZIP エントリの相対パスを extract_dir 配下へ安全に結合する。
 
@@ -42,18 +74,7 @@ def _safe_join(base: Path, entry_path: str) -> Path:
     Raises:
         ValueError: 不正なエントリパスを検出した場合
     """
-    normalized = entry_path.replace("\\", "/")
-    rel = PurePosixPath(normalized)
-
-    if rel.is_absolute() or rel.drive:
-        msg = f"絶対パスのエントリは許可されていません: {entry_path}"
-        raise ValueError(msg)
-    if any(part == ".." for part in rel.parts):
-        msg = f"'..' を含むエントリは許可されていません: {entry_path}"
-        raise ValueError(msg)
-    if not rel.parts:
-        msg = f"空のエントリパスは許可されていません: {entry_path}"
-        raise ValueError(msg)
+    rel = _validate_relative_entry(entry_path)
 
     base_resolved = base.resolve()
     candidate = base_resolved.joinpath(*rel.parts)
@@ -242,11 +263,44 @@ def _resolve_zip_filename(target: Path, zip_filename: Path | None) -> Path:
     return result
 
 
-def create_secure_encrypted_zip(
+def _validate_files_arg(target: Path, files: Sequence[str]) -> list[tuple[str, Path]]:
+    """`create_secure_encrypted_zip` の `files` 引数を検証する。
+
+    Returns:
+        list[tuple[str, Path]]: (relative_path, 実ファイルパス) のリスト
+
+    Raises:
+        ValueError: `target` がファイル、`files` が空、またはエントリが
+            不正(絶対パス/`..`/空/target 外への逸脱)、もしくは実在する
+            通常ファイルでない場合
+    """
+    if target.is_file():
+        msg = "files 指定時に target をファイルにすることはできません。"
+        raise ValueError(msg)
+    if len(files) == 0:
+        msg = "files が空です。空のZIPは作成できません。"
+        raise ValueError(msg)
+    validated_files: list[tuple[str, Path]] = []
+    for entry in files:
+        rel = _validate_relative_entry(entry)
+        file_path = target.joinpath(*rel.parts)
+        if not file_path.is_relative_to(target):
+            msg = f"target 外へのエントリは許可されていません: {entry}"
+            raise ValueError(msg)
+        if not file_path.is_file():
+            msg = f"ファイルが見つからないか、通常ファイルではありません: {entry}"
+            raise ValueError(msg)
+        validated_files.append((rel.as_posix(), file_path))
+    return validated_files
+
+
+def create_secure_encrypted_zip(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
     target: Path,
     password: bytes,
     zip_filename: Path | None = None,
     encrypt_filenames: bool = False,
+    files: Sequence[str] | None = None,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> Path:
     """指定されたファイルやディレクトリを暗号化してZIPを作成する。
 
@@ -255,19 +309,28 @@ def create_secure_encrypted_zip(
         password: 暗号化パスワード
         zip_filename: 出力するZIPファイルのパス(省略可能)
         encrypt_filenames: ファイル名を暗号化するかどうか
+        files: 圧縮対象を `target` 配下の相対パス一覧に限定する(省略可能)。
+            指定時は `_process_directory` の gitignore ウォークをスキップし、
+            列挙されたファイルだけを圧縮する。`target` がファイルの場合は
+            指定できない。空リストは許可しない(空 ZIP を作らない)。
+        extra_metadata: metadata の `extra` キーに opaque な値として格納する
+            追加情報(省略可能)。中身は検証しない。
 
     Returns:
         作成されたZIPファイルのパス
 
     Raises:
         FileNotFoundError: 指定されたパスが存在しない場合
-        ValueError: パスの種類が不正な場合
+        ValueError: パスの種類が不正な場合、または `files` が不正な場合
     """
     if not target.exists():
         msg = f"指定されたパス '{target}' が見つかりません。"
         raise FileNotFoundError(msg)
 
     target = target.resolve()
+
+    validated_files = _validate_files_arg(target, files) if files is not None else None
+
     zip_filename = _resolve_zip_filename(target, zip_filename)
 
     iterations = DEFAULT_PBKDF2_ITERATIONS
@@ -320,7 +383,10 @@ def create_secure_encrypted_zip(
 
     try:
         with zipfile.ZipFile(zip_filename, "w", zipfile.ZIP_STORED) as zf:
-            if target.is_file():
+            if validated_files is not None:
+                for rel_posix, file_path in validated_files:
+                    _add_file(zf, file_path, rel_posix)
+            elif target.is_file():
                 _add_file(zf, target, target.name)
             elif target.is_dir():
                 _process_directory(target, [], zf)
@@ -330,12 +396,14 @@ def create_secure_encrypted_zip(
                 )
                 raise ValueError(msg)  # ruff: ignore[raise-within-try]
 
-            metadata = {
+            metadata: dict[str, Any] = {
                 "version": METADATA_VERSION,
                 "kdf": {"algorithm": "pbkdf2-sha256", "iterations": iterations},
                 "file_mapping": file_mapping,
                 "encrypt_filenames": encrypt_filenames,
             }
+            if extra_metadata is not None:
+                metadata["extra"] = extra_metadata
             metadata_json = json.dumps(metadata, ensure_ascii=False)
             encrypted_metadata = metadata_fernet.encrypt(metadata_json.encode("utf-8"))
             zf.writestr("metadata.encrypted", encrypted_metadata)

@@ -44,9 +44,15 @@ run = [
 [tasks.encrypt]
 description = "File や Directory をパスワード付き ZIP に圧縮"
 quiet = true
-usage = 'arg "<target>" help="圧縮対象の File または Directory"'
-run = "uv run python -m zipper -e -c ${usage_target}"
-run_windows = 'uv run python -m zipper -e -c %usage_target%'
+usage = '''
+arg "<target>" help="圧縮対象の File または Directory"
+flag "--git-diff <mode>" {
+  help "git の差分ファイルだけを圧縮する (Directory のみ)"
+  choices "staged" "worktree"
+}
+'''
+run = "uv run python -m zipper -e -c ${usage_target} ${usage_git_diff:+--git-diff ${usage_git_diff}}"
+run_windows = 'if not "%usage_git_diff%"=="" (uv run python -m zipper -e -c %usage_target% --git-diff %usage_git_diff%) else (uv run python -m zipper -e -c %usage_target%)'
 
 [tasks.decrypt]
 description = "パスワード付き ZIP を解凍"
