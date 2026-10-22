@@ -52,7 +52,7 @@ flag "--git-diff <mode>" {
 }
 '''
 run = "uv run python -m zipper -e -c ${usage_target} ${usage_git_diff:+--git-diff ${usage_git_diff}}"
-run_windows = 'if not "%usage_git_diff%"=="" (uv run python -m zipper -e -c %usage_target% --git-diff %usage_git_diff%) else (uv run python -m zipper -e -c %usage_target%)'
+run_windows = 'if defined usage_git_diff (uv run python -m zipper -e -c "%usage_target:\=/%" --git-diff %usage_git_diff%) else (uv run python -m zipper -e -c "%usage_target:\=/%")'
 
 [tasks.decrypt]
 description = "パスワード付き ZIP を解凍"
